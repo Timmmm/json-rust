@@ -117,15 +117,15 @@ macro_rules! expect_byte_ignore_whitespace {
     })
 }
 
-// Expect to find EOF or just whitespaces leading to EOF after a JSON value
-macro_rules! expect_eof {
+// Expect to find some whitespace. This is used to consume whitespace at the end of the JSON value.
+macro_rules! expect_whitespace {
     ($parser:ident) => ({
         while !$parser.is_eof() {
             match $parser.read_byte() {
                 9 ..= 13 | 32 => $parser.bump(),
                 _             => {
                     $parser.bump();
-                    return $parser.unexpected_character();
+                    break;
                 }
             }
         }
@@ -623,8 +623,8 @@ impl<'a> Parser<'a> {
         Ok(unsafe { Number::from_parts_unchecked(true, num, big_e.saturating_add(e * sign)) })
     }
 
-    // Parse away!
-    fn parse(&mut self) -> Result<JsonValue> {
+    // Parse away! This returns the value, and the number of bytes read.
+    fn parse(&mut self, allow_trailing_chars: bool) -> Result<(JsonValue, usize)> {
         let mut stack = Vec::with_capacity(3);
         let mut ch = expect_byte_ignore_whitespace!(self);
 
@@ -701,9 +701,13 @@ impl<'a> Parser<'a> {
             'popping: loop {
                 match stack.last_mut() {
                     None => {
-                        expect_eof!(self);
-
-                        return Ok(value);
+                        expect_whitespace!(self);
+                        
+                        if !allow_trailing_chars && !self.is_eof() {
+                            return $parser.unexpected_character();
+                        }
+                        
+                        return Ok(value, self.index);
                     },
 
                     Some(&mut StackBlock(JsonValue::Array(ref mut array), _)) => {
@@ -759,7 +763,13 @@ struct StackBlock(JsonValue, usize);
 // All that hard work, and in the end it's just a single function in the API.
 #[inline]
 pub fn parse(source: &str) -> Result<JsonValue> {
-    Parser::new(source).parse()
+    let (value, _) = Parser::new(source).parse(false)?;
+    Ok(value)
+}
+
+#[inline]
+pub fn parse_allow_trailing_chars(source: &str) -> Result<(JsonValue, usize)> {
+    Parser::new(source).parse(true)
 }
 
 
